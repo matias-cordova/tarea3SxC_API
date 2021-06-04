@@ -1,0 +1,206 @@
+## PUNTO 4.7 Calculando el IDH
+## TODO ESTE PUNTO 4.7 ES NECESARIO PARA ELABORAR EL IDH EN 4.8 
+## REPLICA DEL PUNTO 4.7 DE LA PAGINA WEB: "https://github.com/sebacea/tallerecopub/blob/hdi2019/Taller1/Doing-Economics-Project-4-R-Markdown.Rmd"
+```{r}
+library(tidyverse)
+library(readxl)
+library(httr)
+url2 <- 'http://hdr.undp.org/sites/default/files/2020_statistical_annex_table_1.xlsx'
+GET(url2, write_disk(tf2 <- tempfile(fileext = ".xlsx")))
+HDR2019 <- read_excel(tf2,
+  sheet = "Table 1",
+  skip = 2)
+head(HDR2019)
+
+str(HDR2019)
+
+names(HDR2019)[1] <- "HDI.rank"
+names(HDR2019)[2] <- "Country"
+names(HDR2019)[names(HDR2019) == "...15"] <- 
+  "HDI.rank.2019"
+HDR2019 <- subset(HDR2019,
+  !is.na(HDI.rank) & HDI.rank != "HDI rank")
+
+HDR2019 <- HDR2019[,-c(4,14)]
+str(HDR2019)
+
+names(HDR2019)[3] <- "HDI"
+names(HDR2019)[4] <- "LifeExp"
+names(HDR2019)[6] <- "ExpSchool"
+names(HDR2019)[8] <- "MeanSchool"
+names(HDR2019)[10] <- "GNI.capita"
+names(HDR2019)[12] <- "GNI.HDI.rank"
+
+HDR2019$HDI.rank <- as.numeric(HDR2019$HDI.rank)
+HDR2019$Country <- as.factor(HDR2019$Country)
+HDR2019$HDI <- as.numeric(HDR2019$HDI)
+HDR2019$LifeExp <- as.numeric(HDR2019$LifeExp)
+HDR2019$ExpSchool <- as.numeric(HDR2019$ExpSchool)
+HDR2019$MeanSchool <- as.numeric(HDR2019$MeanSchool)
+HDR2019$GNI.capita <- as.numeric(HDR2019$GNI.capita)
+HDR2019$GNI.HDI.rank <- as.numeric(HDR2019$GNI.HDI.rank)
+HDR2019$HDI.rank.2019 <- as.numeric(HDR2019$HDI.rank.2019)
+str(HDR2019)
+
+HDR2019$I.Health <- 
+  (HDR2019$LifeExp - 20) / (85 - 20)
+HDR2019$I.Education <- 
+  ((pmin(HDR2019$ExpSchool, 18) - 0) / 
+  (18 - 0) + (HDR2019$MeanSchool - 0) / 
+  (15 - 0)) / 2
+HDR2019$I.Income <-
+  (log(HDR2019$GNI.capita) - log(100)) /
+  (log(75000) - log(100))
+HDR2019$HDI.calc <- 
+  (HDR2019$I.Health * HDR2019$I.Education * 
+    HDR2019$I.Income)^(1/3)
+
+HDR2019[, c("HDI", "HDI.calc")]
+```
+
+## PUNTO 4.8 Creando nuestro propio IDH
+## Merge data and calculate alternative indices
+
+```{r}
+##Primero obtenemos el data frame de la API de la pagina web indicada en la tarea
+##http://hdr.undp.org/en/content/human-development-report-office-statistical-data-api
+
+library(jsonlite)
+library(reshape2)
+
+url = "http://ec2-54-174-131-205.compute-1.amazonaws.com/API/hdro_api_all.json"
+datos <- GET(url)
+datos <- fromJSON(content(datos,type="text"))
+datos <- data.frame(datos)
+
+```
+
+```{r}
+indicators <- c(
+  "Literacy rate, adult (% ages 15 and older)", 
+  "Gross enrolment ratio, tertiary (% of tertiary school-age population)", 
+  "Primary school teachers trained to teach (%)", 
+  "Child malnutrition, stunting (moderate or severe) (% under age 5)", 
+  "Mortality rate, female adult (per 1,000 people)", 
+  "Mortality rate, male adult (per 1,000 people)")
+
+##separamos solo los indicadores que nos sirven para crear el IDH
+datosl <- datos[
+  datos$indicator_name %in% indicators, ]
+##aplicamos dcast() para que los datos tomen la misma estructura que HDR2019
+datosl <- dcast(datosl, indicator_id+indicator_name+country_code+country_name~year, value.var = "value")
+##creamos una columna en el dataframe con el promedio de los ultimos IDH registrados
+datosl$"9999" <- apply(datosl[ ,c(12,19:23)], 1, mean, na.rm = TRUE)
+##se seleccionan solo las columnas de nuestro interes
+datosl <- subset(datosl, 
+  select = c("indicator_name", "country_name", "9999"))
+##se reemplazan todos los valores string "NaN" por NULL
+datosl$"9999"[is.nan(datosl$"9999")]<-NA
+##se aplica dcast() para reordenar los datos
+datosw <- dcast(datosl, country_name ~ indicator_name, 
+  value.var = "9999")
+
+names(datosw)[1] <- "Country"
+names(datosw)[2] <- "Child.Malnu"
+names(datosw)[3] <- "Tert.Enrol"
+names(datosw)[4] <- "Adult.Lit"
+names(datosw)[5] <- "Mortality.Female"
+names(datosw)[6] <- "Mortality.Male"
+names(datosw)[7] <- "Prim.Teacher"
+str(datosw)
+```
+
+```{r}
+##luego de verificar que los datos estan ok, se aplica summary() para obtener los minimos y los maximos, para calcular nuestro propio IDH
+summary(datosw)
+```
+
+```{r}
+##obtenemos un indicador de educacion que se usa para calcular el IDH
+datosw$I.Adult.Lit <-
+  (datosw$Adult.Lit-24.16) / (99.99-24.16)
+datosw$I.Tert.Enrol<-
+  (datosw$Tert.Enrol-3.251) / (134.072-3.251) 
+datosw$I.Prim.Teacher <-
+  (datosw$Prim.Teacher-14.84) / (100-14.84)
+  
+datosw$I.Education.alt <- 
+  (datosw$I.Adult.Lit +
+    datosw$I.Tert.Enrol + 
+    datosw$I.Prim.Teacher) / 3
+summary(datosw$I.Education.alt)
+```
+
+```{r}
+##ya obtubimos el indice de educacion, ahora obtendremos el indice de salud.
+datosw$I.Child.MalNu <-
+  (datosw$Child.Malnu - 1.7) / (54.008 - 1.7)
+datosw$I.Mortality.Female <-
+  (datosw$Mortality.Female - 33.61) /
+  (451.94 - 33.61) 
+datosw$I.Mortality.Male <-
+  (datosw$Mortality.Male - 58.82) /
+  (552.33 - 58.82)
+datosw$I.Health.alt <-
+  (datosw$I.Child.MalNu + 
+  datosw$I.Mortality.Female + 
+  datosw$I.Mortality.Male) / 3
+
+datosw$I.Health.alt <- (1 - datosw$I.Health.alt)
+summary(datosw$I.Health.alt)
+```
+
+```{r}
+##se hace un join para agregar todos nuestros datos a un solo dataframe
+join2018_19 <- merge(HDR2019, datosw)
+```
+
+## Calculaando un IDH alternativo
+## Ya calculamos un indice de Educacion y de Salud alternativos. Ahora con los Ingresos obtenidos en 4.7 podemos crear facilmente nuestro IDH
+
+```{r}
+##calculamos y guardamos nuestro propio IDH
+join2018_19$IDH.propio <- 
+  (join2018_19$I.Health.alt *
+    join2018_19$I.Education.alt *
+    join2018_19$I.Income)^(1/3) 
+summary(join2018_19$IDH.propio)
+```
+
+##Se calculan los ranking de IDH
+
+```{r}
+##eliminamos los valores vacios NA
+data2018_19_sub <- 
+  subset(join2018_19, !is.na(HDI) & !is.na(IDH.propio)) 
+```
+
+```{r}
+##Creamos un ranking de IDH propio y un Ranking del IDH real
+data2018_19_sub$IDH.propio.rank <-
+  rank(-data2018_19_sub$IDH.propio, na.last = "keep") 
+data2018_19_sub$IDH.rank <-
+  rank(-data2018_19_sub$HDI, na.last = "keep") 
+```
+
+```{r}
+##Creamos un graficos de dispercion para comparar el ranking de IDH propio vs IDH real
+ggplot(data2018_19_sub, aes(x = IDH.rank, y = IDH.propio.rank)) +
+  geom_point(shape = 16) +
+  labs(y = "Ranking de IDH alternativo", x = "Ranking de IDH real") +
+  ggtitle("Comparacion ranking IDH real y IDH propio") +
+  theme_bw()
+
+ggplot(data2018_19_sub, aes(x = IDH.rank, y = IDH.propio.rank)) +
+  geom_point(shape = 16) +
+  labs(y = "Ranking de IDH alternativo", x = "Ranking de IDH real") +
+  ggtitle("Comparacion ranking IDH real y IDH propio") +
+  theme_bw() + geom_smooth(span = 0.8, fill = "red", colour = "red4", 
+                           lty = 2, size = 1)
+
+
+tablaIDH <- select(data2018_19_sub, Country, HDI, IDH.rank, IDH.propio, IDH.propio.rank)
+tablaIDH1 <- select(tablaIDH, Country, IDH.propio)
+
+```
+
